@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files
+data/input/*
+data/output/*
+data/frames/*
+data/processed/*
+data/database/*.db
+data/database/*.db-journal
+
+# Results
+results/*.json
+results/*.csv
+
+# Logs
+*.log
+system_k.log
+
+# Models (YOLO will download automatically)
+*.pt
+*.onnx
+
+# Reference frames
+data/reference_frame.jpg
+
+# OS
+.DS_Store
+Thumbs.db
+

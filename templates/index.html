@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System K Vehicle Counting Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background: #f0f4ff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover {
+            background: #e0e8ff;
+            border-color: #764ba2;
+        }
+
+        .upload-area.dragover {
+            background: #d0d8ff;
+            border-color: #764ba2;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .canvas-container {
+            position: relative;
+            margin: 20px 0;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            background: #000;
+            display: inline-block;
+        }
+
+        canvas {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .controls {
+            margin: 15px 0;
+        }
+
+        .controls label {
+            display: inline-block;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+
+        .controls input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-right: 15px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            display: none;
+        }
+
+        .status.processing {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            display: block;
+        }
+
+        .status.success {
+            background: #d4edda;
+            border: 1px solid #28a745;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            border: 1px solid #dc3545;
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .result-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .result-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .result-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .config-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .config-panel {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+        }
+
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 200px;
+            background-color: #555;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚗 System K Vehicle Counting Tool</h1>
+        <p class="subtitle">Upload video, configure ROI, and count vehicles</p>
+
+        <!-- Upload Section -->
+        <div class="section">
+            <h2>1. Upload Video</h2>
+            <div class="upload-area" id="uploadArea">
+                <p>📁 Click to upload or drag and drop video file</p>
+                <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
+                    Supported formats: MP4, AVI, MOV, MKV, FLV (Max 500MB)
+                </p>
+                <input type="file" id="videoInput" accept="video/*">
+            </div>
+            <div id="uploadStatus" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Preview and ROI Configuration -->
+        <div class="section">
+            <h2>2. Configure ROI (Blackout Area)</h2>
+            <div class="controls">
+                <p style="color: #666; margin-bottom: 10px;">Click on the preview image to draw ROI polygon (at least 3 points)</p>
+                <button class="btn btn-secondary" onclick="clearCanvas()">Clear</button>
+                <button class="btn btn-secondary" onclick="loadConfig()">Load Config</button>
+                <button class="btn" onclick="saveConfig()">Save Config</button>
+            </div>
+            <div class="canvas-container" id="canvasContainer">
+                <canvas id="previewCanvas"></canvas>
+            </div>
+            <div class="controls" style="margin-top: 15px;">
+                <label>Segment Duration (seconds):</label>
+                <input type="number" id="segmentDuration" value="300" min="30" max="3600">
+                <br>
+                <label style="margin-top: 10px; display: block;">
+                    Save Frames Interval (seconds, 0 = don't save):
+                    <input type="number" id="saveFramesInterval" value="300" min="0" max="3600" style="margin-left: 10px;">
+                    <span class="tooltip">?
+                        <span class="tooltiptext">Khoảng thời gian giữa các frame được lưu (ví dụ: 300 = mỗi 5 phút). 0 = không lưu riêng</span>
+                    </span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Processing Section -->
+        <div class="section">
+            <h2>3. Process Video</h2>
+            <button class="btn" id="processBtn" onclick="startProcessing()" disabled>
+                Start Processing
+            </button>
+            <div class="status" id="statusDiv">
+                <div id="statusMessage"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill">0%</div>
+                </div>
+                <div id="currentStep" style="margin-top: 10px; font-size: 0.9em;"></div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="section">
+            <h2>4. Results</h2>
+            <button class="btn btn-secondary" onclick="loadResults()">Refresh Results</button>
+            <div id="imageResults" style="margin-top: 20px;">
+                <h3>Processed Images</h3>
+                <p id="processedImagesInfo" style="color: #666;">Images will be saved to <code>data/processed_images/</code></p>
+                <p id="processedImagesCount" style="font-size: 1.2em; color: #667eea; font-weight: bold;">0 images processed</p>
+            </div>
+            <div class="results" id="resultsDiv" style="margin-top: 20px;">
+                <div class="result-card">
+                    <h3>Count Up</h3>
+                    <div class="value" id="countUp">0</div>
+                </div>
+                <div class="result-card">
+                    <h3>Count Down</h3>
+                    <div class="value" id="countDown">0</div>
+                </div>
+                <div class="result-card">
+                    <h3>Total</h3>
+                    <div class="value" id="totalCount">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let canvas, ctx;
+        let currentImage = null;
+        let roiPoints = [];
+        let isDrawing = false;
+        let uploadedFilename = null;
+
+        // Initialize canvas
+        window.onload = function() {
+            canvas = document.getElementById('previewCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Setup event listeners
+            setupEventListeners();
+            loadConfig();
+        };
+
+        function setupEventListeners() {
+            // File upload
+            const uploadArea = document.getElementById('uploadArea');
+            const videoInput = document.getElementById('videoInput');
+            
+            uploadArea.addEventListener('click', () => videoInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('drop', handleDrop);
+            uploadArea.addEventListener('dragleave', handleDragLeave);
+            videoInput.addEventListener('change', handleFileSelect);
+            
+            // Drawing mode
+            document.querySelectorAll('input[name="drawMode"]').forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    drawMode = e.target.value;
+                    clearCanvas();
+                });
+            });
+            
+            // Canvas drawing
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('click', handleCanvasClick);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.currentTarget.classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        }
+
+        function handleFile(file) {
+            if (!file.type.startsWith('video/')) {
+                alert('Please select a video file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('video', file);
+            
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    uploadedFilename = data.filename;
+                    document.getElementById('uploadStatus').innerHTML = 
+                        `<p style="color: green;">✓ ${data.message}</p>`;
+                    document.getElementById('processBtn').disabled = false;
+                    
+                    // Load preview frame
+                    loadPreviewFrame(data.preview_frame);
+                } else {
+                    alert('Upload failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Upload failed: ' + error.message);
+            });
+        }
+
+        function loadPreviewFrame(framePath) {
+            const img = new Image();
+            img.onload = function() {
+                currentImage = img;
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = '/' + framePath;
+        }
+
+        function handleCanvasClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Scale từ display coordinates sang actual canvas coordinates
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = clickX * scaleX;
+            const y = clickY * scaleY;
+            
+            // Chỉ vẽ ROI
+            roiPoints.push([x, y]);
+            drawROI();
+        }
+
+        function drawROI() {
+            if (!currentImage) return;
+            ctx.drawImage(currentImage, 0, 0);
+            
+            if (roiPoints.length > 0) {
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(roiPoints[0][0], roiPoints[0][1]);
+                for (let i = 1; i < roiPoints.length; i++) {
+                    ctx.lineTo(roiPoints[i][0], roiPoints[i][1]);
+                }
+                if (roiPoints.length > 2) {
+                    ctx.closePath();
+                }
+                ctx.stroke();
+                
+                // Draw points
+                roiPoints.forEach((point, i) => {
+                    ctx.fillStyle = '#00ff00';
+                    ctx.beginPath();
+                    ctx.arc(point[0], point[1], 5, 0, 2 * Math.PI);
+                    ctx.fill();
+                });
+            }
+        }
+
+        function clearCanvas() {
+            roiPoints = [];
+            if (currentImage) {
+                ctx.drawImage(currentImage, 0, 0);
+            }
+        }
+
+        function startDrawing(e) {
+            isDrawing = true;
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        function saveConfig() {
+            if (roiPoints.length < 3) {
+                alert('Please draw at least 3 points for ROI');
+                return;
+            }
+            
+            const config = {
+                roi: {
+                    type: 'polygon',
+                    points: roiPoints,
+                    mask_color: [0, 0, 0]
+                },
+                vehicle_classes: ['car', 'truck', 'bus', 'motorcycle']
+            };
+            
+            fetch('/api/save-config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Config saved successfully!');
+                } else {
+                    alert('Failed to save config: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to save config: ' + error.message);
+            });
+        }
+
+        function loadConfig() {
+            fetch('/api/load-config')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.config) {
+                    const config = data.config;
+                    if (config.roi && config.roi.points) {
+                        roiPoints = config.roi.points;
+                    }
+                    if (currentImage) {
+                        drawROI();
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error loading config:', error);
+            });
+        }
+
+        function startProcessing() {
+            if (!uploadedFilename) {
+                alert('Please upload a video first');
+                return;
+            }
+            
+            const segmentDuration = parseInt(document.getElementById('segmentDuration').value);
+            const saveFramesInterval = parseInt(document.getElementById('saveFramesInterval').value);
+            
+            const statusDiv = document.getElementById('statusDiv');
+            statusDiv.className = 'status processing';
+            document.getElementById('processBtn').disabled = true;
+            
+            fetch('/api/process', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    filename: uploadedFilename,
+                    segment_duration: segmentDuration,
+                    save_frames_interval: saveFramesInterval > 0 ? saveFramesInterval : null
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    pollStatus();
+                } else {
+                    alert('Failed to start processing: ' + (data.error || 'Unknown error'));
+                    statusDiv.className = 'status error';
+                    document.getElementById('processBtn').disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to start processing: ' + error.message);
+                statusDiv.className = 'status error';
+                document.getElementById('processBtn').disabled = false;
+            });
+        }
+
+        function pollStatus() {
+            const interval = setInterval(() => {
+                fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const progress = data.progress || 0;
+                    document.getElementById('progressFill').style.width = progress + '%';
+                    document.getElementById('progressFill').textContent = progress + '%';
+                    document.getElementById('statusMessage').textContent = data.message || '';
+                    document.getElementById('currentStep').textContent = data.current_step || '';
+                    
+                    if (!data.is_processing) {
+                        clearInterval(interval);
+                        const statusDiv = document.getElementById('statusDiv');
+                        if (data.message && data.message.includes('Error')) {
+                            statusDiv.className = 'status error';
+                        } else {
+                            statusDiv.className = 'status success';
+                            loadResults();
+                        }
+                        document.getElementById('processBtn').disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error polling status:', error);
+                    clearInterval(interval);
+                });
+            }, 1000);
+        }
+
+        function loadResults() {
+            fetch('/api/results')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.summary) {
+                    document.getElementById('countUp').textContent = data.summary.count_up || 0;
+                    document.getElementById('countDown').textContent = data.summary.count_down || 0;
+                    document.getElementById('totalCount').textContent = data.summary.total || 0;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading results:', error);
+            });
+        }
+    </script>
+</body>
+</html>
+
