@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 System K Vehicle Counting Tool - Web Interface
-Web interface để upload video, vẽ ROI, và xem kết quả
+Web interface để upload video và xem kết quả
 """
 import os
 import sys
@@ -96,72 +96,13 @@ def upload_video():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Extract first frame for ROI configuration
-        cap = cv2.VideoCapture(filepath)
-        ret, frame = cap.read()
-        if ret:
-            frame_path = f"static/frames/{timestamp}_preview.jpg"
-            cv2.imwrite(frame_path, frame)
-            cap.release()
-            
-            return jsonify({
-                'success': True,
-                'filename': filename,
-                'preview_frame': frame_path,
-                'message': 'Video uploaded successfully'
-            })
-        cap.release()
-        return jsonify({'error': 'Could not extract preview frame'}), 500
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'message': 'Video uploaded successfully'
+        })
     
     return jsonify({'error': 'Invalid file type'}), 400
-
-
-@app.route('/api/save-config', methods=['POST'])
-def save_config():
-    """Lưu ROI config"""
-    try:
-        data = request.json
-        config_path = 'config/roi_config.json'
-        
-        # Validate config (chỉ cần ROI, counting_line là optional)
-        required_keys = ['roi', 'vehicle_classes']
-        for key in required_keys:
-            if key not in data:
-                return jsonify({'error': f'Missing key: {key}'}), 400
-        
-        # Save config
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        
-        return jsonify({'success': True, 'message': 'Config saved successfully'})
-    except Exception as e:
-        logger.error(f"Error saving config: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/load-config', methods=['GET'])
-def load_config_api():
-    """Load ROI config"""
-    try:
-        config_path = 'config/roi_config.json'
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            return jsonify({'success': True, 'config': config})
-        else:
-            # Return default config (không có counting_line)
-            default_config = {
-                "roi": {
-                    "type": "polygon",
-                    "points": [[0, 0], [100, 0], [100, 100], [0, 100]],
-                    "mask_color": [0, 0, 0]
-                },
-                "vehicle_classes": ["car", "truck", "bus", "motorcycle"]
-            }
-            return jsonify({'success': True, 'config': default_config})
-    except Exception as e:
-        logger.error(f"Error loading config: {e}")
-        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/process', methods=['POST'])
@@ -617,59 +558,6 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
 def get_status():
     """Lấy trạng thái xử lý"""
     return jsonify(processing_status)
-
-
-@app.route('/api/results', methods=['GET'])
-def get_results():
-    """Lấy kết quả: số lượng ảnh đã xử lý và kết quả đếm xe (nếu có)"""
-    try:
-        # Đếm số ảnh đã xử lý
-        processed_dir = 'data/processed_images'
-        processed_count = 0
-        if os.path.exists(processed_dir):
-            processed_count = len([f for f in os.listdir(processed_dir) if f.endswith('.jpg')])
-        
-        # Lấy kết quả đếm xe (nếu có)
-        db_path = 'data/database/vehicle_counting.db'
-        summary = {'count_up': 0, 'count_down': 0, 'total': 0}
-        recent_results = []
-        
-        if os.path.exists(db_path):
-            summary = get_counting_summary(db_path)
-            
-            # Get recent results
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT timestamp, vehicle_count_up, vehicle_count_down, total_count
-                FROM counting_results
-                ORDER BY timestamp DESC
-                LIMIT 100
-            ''')
-            rows = cursor.fetchall()
-            conn.close()
-            
-            recent_results = [
-                {
-                    'timestamp': row[0],
-                    'count_up': row[1],
-                    'count_down': row[2],
-                    'total': row[3]
-                }
-                for row in rows
-            ]
-        
-        return jsonify({
-            'success': True,
-            'processed_images_count': processed_count,
-            'processed_images_dir': processed_dir,
-            'summary': summary,
-            'recent_results': recent_results
-        })
-    except Exception as e:
-        logger.error(f"Error getting results: {e}")
-        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/frames/<path:filename>')
