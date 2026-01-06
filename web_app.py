@@ -22,7 +22,6 @@ sys.path.insert(0, str(src_path))
 from utils import setup_logging, load_config, create_directories, get_timestamp
 from video_segmentation import segment_video, get_video_duration
 from image_extraction import extract_frames, extract_frames_by_time_interval
-from roi_processing import apply_roi_mask
 from duplicate_detection import check_duplicate, save_image_hash, initialize_database as init_hash_db
 from camera_shift_detection import detect_camera_shift, save_reference_frame, load_reference_frame
 from memo_system import (
@@ -34,13 +33,12 @@ from memo_system import (
 # from vehicle_tracking import VehicleTracker
 # from counting import VehicleCounter
 from storage import (
-    initialize_database, save_counting_result, save_camera_shift,
-    export_to_json, export_to_csv, get_counting_summary
+    initialize_database, save_camera_shift
 )
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'data/input'
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2GB max
 app.config['SECRET_KEY'] = 'system-k-secret-key'
 
 # Setup logging
@@ -61,7 +59,6 @@ create_directories(
     'data/frames',
     'data/processed',
     'data/database',
-    'results',
     'static/uploads',
     'static/frames'
 )
@@ -82,27 +79,52 @@ def index():
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
     """Upload video"""
-    if 'video' not in request.files:
-        return jsonify({'error': 'No video file'}), 400
-    
-    file = request.files['video']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        timestamp = get_timestamp()
-        filename = f"{timestamp}_{filename}"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+    try:
+        if 'video' not in request.files:
+            return jsonify({'error': 'No video file'}), 400
         
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'message': 'Video uploaded successfully'
-        })
-    
-    return jsonify({'error': 'Invalid file type'}), 400
+        file = request.files['video']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not file or not allowed_file(file.filename):
+            return jsonify({'error': 'Invalid file type'}), 400
+        
+        try:
+            filename = secure_filename(file.filename)
+            timestamp = get_timestamp()
+            filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            
+            # Đảm bảo thư mục tồn tại
+            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            
+            file.save(filepath)
+            
+            # Kiểm tra file đã được lưu thành công
+            if not os.path.exists(filepath):
+                logger.error(f"File was not saved: {filepath}")
+                return jsonify({'error': 'Failed to save file'}), 500
+            
+            logger.info(f"Video uploaded successfully: {filename}")
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'message': 'Video uploaded successfully'
+            })
+        except PermissionError as e:
+            logger.error(f"Permission error saving file: {e}")
+            return jsonify({'error': f'Permission denied: {str(e)}'}), 500
+        except OSError as e:
+            logger.error(f"OS error saving file: {e}")
+            return jsonify({'error': f'File system error: {str(e)}'}), 500
+        except Exception as e:
+            logger.error(f"Error saving file: {e}", exc_info=True)
+            return jsonify({'error': f'Error saving file: {str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Unexpected error in upload_video: {e}", exc_info=True)
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 
 @app.route('/api/process', methods=['POST'])
@@ -153,9 +175,16 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
         processing_status['progress'] = 0
         processing_status['message'] = 'Initializing...'
         
-        # Load config
+        # Load config (không cần ROI nữa, chỉ cần vehicle_classes)
         config_path = 'config/roi_config.json'
-        config = load_config(config_path)
+        try:
+            config = load_config(config_path)
+        except FileNotFoundError:
+            # Tạo default config nếu file không tồn tại
+            logger.warning(f"Config file not found: {config_path}, using default config")
+            config = {
+                "vehicle_classes": ["car", "truck", "bus", "motorcycle"]
+            }
         
         db_path = 'data/database/vehicle_counting.db'
         initialize_database(db_path)
@@ -163,9 +192,6 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
         
         # Lazy import để tránh Bus error khi khởi động
         detector = None
-        tracker = None
-        counter = None
-        previous_centroids = {}
         
         try:
             processing_status['message'] = 'Loading YOLO model (this may take a moment)...'
@@ -173,14 +199,8 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
             logger.info("Importing vehicle detection modules with timeout protection...")
             
             # Sử dụng yolo_loader với timeout
-            from yolo_loader import load_yolo_with_timeout, create_detector_safe
+            from yolo_loader import create_detector_safe
             
-            VehicleDetectorClass, VehicleTrackerClass, VehicleCounterClass = load_yolo_with_timeout(timeout_seconds=30)
-            
-            if VehicleDetectorClass is None:
-                raise RuntimeError("YOLO modules không thể import (timeout hoặc system error)")
-            
-            logger.info("YOLO modules imported, creating instances...")
             processing_status['current_step'] = 'Creating YOLO detector...'
             
             detector = create_detector_safe(model_path='yolov8n.pt', conf_threshold=0.25, timeout=30)
@@ -188,16 +208,7 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
             if detector is None:
                 raise RuntimeError("VehicleDetector không thể tạo (timeout hoặc system error)")
             
-                logger.info("Creating tracker and counter...")
-                tracker = VehicleTrackerClass()
-                # Chỉ tạo counter nếu có counting_line trong config
-                if 'counting_line' in config and config.get('counting_line'):
-                    counter = VehicleCounterClass(config['counting_line'])
-                else:
-                    logger.info("No counting_line in config, skipping vehicle counting")
-                    counter = None
-            
-            logger.info("✓ All YOLO components initialized successfully")
+            logger.info("✓ YOLO detector initialized successfully")
             processing_status['message'] = 'YOLO loaded successfully'
             
         except (SystemError, OSError, RuntimeError, MemoryError, TimeoutError) as e:
@@ -349,7 +360,7 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
                     cap.release()
                     frame_time = current_segment_offset + (frame_idx / fps)
                 
-                # Check duplicate và lưu memo (NHƯNG VẪN LƯU ẢNH ĐÃ BÔI ĐEN)
+                # Check duplicate và lưu memo
                 is_duplicate, matched_hash = check_duplicate(frame_path, db_path)
                 if is_duplicate:
                     # Lưu memo về duplicate
@@ -361,7 +372,7 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
                         description=f"Duplicate frame detected at {frame_time:.2f}s"
                     )
                     logger.info(f"Duplicate detected at {frame_time:.2f}s, but will still save processed image")
-                    # KHÔNG continue - vẫn tiếp tục để lưu ảnh đã bôi đen (mục đích chính)
+                    # KHÔNG continue - vẫn tiếp tục để lưu ảnh (mục đích chính)
                 
                 # Check camera shift và lưu memo
                 if reference_frame is not None:
@@ -385,81 +396,28 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
                         )
                         logger.warning(f"Camera shift detected at {frame_time:.2f}s, saved to memo")
                 
-                # Apply ROI mask (bôi đen phần thừa)
-                try:
-                    roi_config = config['roi'].copy()
-                    if 'points' in roi_config:
-                        # Lấy kích thước frame thực tế
-                        frame_h, frame_w = frame.shape[:2]
-                        
-                        # Lấy preview frame size từ config hoặc từ reference frame
-                        # Preview frame có thể có kích thước khác với frame thực tế
-                        # Cần scale ROI points từ preview size sang frame size
-                        preview_frame_path = "data/reference_frame.jpg"
-                        if os.path.exists(preview_frame_path):
-                            preview_frame = cv2.imread(preview_frame_path)
-                            if preview_frame is not None:
-                                preview_h, preview_w = preview_frame.shape[:2]
-                                
-                                # Tính scale factor
-                                scale_x = frame_w / preview_w if preview_w > 0 else 1.0
-                                scale_y = frame_h / preview_h if preview_h > 0 else 1.0
-                                
-                                # Scale ROI points từ preview size sang frame size
-                                scaled_points = []
-                                for p in roi_config['points']:
-                                    scaled_x = p[0] * scale_x
-                                    scaled_y = p[1] * scale_y
-                                    scaled_points.append([scaled_x, scaled_y])
-                                
-                                roi_config['points'] = scaled_points
-                                logger.info(f"Scaled ROI points: preview {preview_w}x{preview_h} -> frame {frame_w}x{frame_h} (scale: {scale_x:.3f}x{scale_y:.3f})")
-                            else:
-                                logger.warning("Could not load preview frame for scaling, using ROI points as is")
-                        else:
-                            # Nếu không có preview frame, giả sử ROI points đã đúng với frame size
-                            max_x = max([p[0] for p in roi_config['points']] if roi_config['points'] else [0])
-                            max_y = max([p[1] for p in roi_config['points']] if roi_config['points'] else [0])
-                            logger.debug(f"Frame size: {frame_w}x{frame_h}, ROI points: {len(roi_config['points'])} points, max: ({max_x}, {max_y})")
-                            # Nếu points quá nhỏ so với frame, có thể cần scale
-                            if max_x < frame_w * 0.5 or max_y < frame_h * 0.5:
-                                logger.warning(f"ROI points may need scaling: max ({max_x}, {max_y}) vs frame ({frame_w}, {frame_h})")
-                    
-                    masked_frame = apply_roi_mask(frame, roi_config)
-                    logger.debug(f"Applied ROI mask to frame {frame_idx}, original shape: {frame.shape}, masked shape: {masked_frame.shape}")
-                except Exception as e:
-                    logger.error(f"Error applying ROI mask to frame {frame_idx}: {e}", exc_info=True)
-                    # Nếu lỗi, vẫn lưu frame gốc nhưng log warning
-                    masked_frame = frame
-                    processing_status['message'] = f"Warning: ROI mask failed, saving original frame"
-                
-                # LƯU ẢNH ĐÃ ĐƯỢC BÔI ĐEN (mục đích chính của tool)
+                # LƯU ẢNH ĐÃ XỬ LÝ (mục đích chính của tool)
                 processed_dir = "data/processed_images"
                 create_directories(processed_dir)
                 
-                # Lưu ảnh đã được bôi đen
+                # Lưu ảnh đã xử lý
                 processed_filename = f"{Path(video_path).stem}_processed_time_{int(frame_time):06d}s_{frame_idx:04d}.jpg"
                 processed_path = os.path.join(processed_dir, processed_filename)
                 
-                # Kiểm tra masked_frame có hợp lệ không
-                if masked_frame is None or masked_frame.size == 0:
-                    logger.error(f"Masked frame is invalid for frame {frame_idx}")
+                # Kiểm tra frame có hợp lệ không
+                if frame is None or frame.size == 0:
+                    logger.error(f"Frame is invalid for frame {frame_idx}")
                     continue
                 
-                # Lưu ảnh - QUAN TRỌNG: Luôn lưu ảnh đã được bôi đen
+                # Lưu ảnh
                 logger.debug(f"Attempting to save processed image: {processed_path}")
-                success = cv2.imwrite(processed_path, masked_frame)
+                success = cv2.imwrite(processed_path, frame)
                 
                 if success:
                     # Verify file was actually created
                     if os.path.exists(processed_path):
                         file_size = os.path.getsize(processed_path)
-                        # Kiểm tra xem ảnh có thực sự được bôi đen không (so sánh với ảnh gốc)
-                        diff = cv2.absdiff(frame, masked_frame)
-                        black_pixels = np.sum(diff > 10)  # Đếm số pixel khác biệt (đã bôi đen)
-                        total_pixels = frame.shape[0] * frame.shape[1]
-                        black_ratio = (black_pixels / total_pixels) * 100 if total_pixels > 0 else 0
-                        logger.info(f"✓ Saved processed image: {processed_filename} ({file_size} bytes) | Blackout ratio: {black_ratio:.1f}% ({black_pixels}/{total_pixels} pixels changed)")
+                        logger.info(f"✓ Saved processed image: {processed_filename} ({file_size} bytes)")
                     else:
                         logger.error(f"✗ File was not created after cv2.imwrite: {processed_path}")
                         processing_status['message'] = f"Error: File not created: {processed_path}"
@@ -467,84 +425,17 @@ def process_video_thread(video_path, segment_duration, save_frames_interval=None
                     logger.error(f"✗ cv2.imwrite returned False for: {processed_path}")
                     processing_status['message'] = f"Warning: Failed to save image. Check permissions for {processed_dir}"
                 
-                # Detect vehicles (chỉ nếu detector đã được khởi tạo) - TÙY CHỌN
-                detections = []
-                if detector is not None:
-                    try:
-                        detections = detector.detect_vehicles(
-                            masked_frame,
-                            vehicle_classes=config.get('vehicle_classes', None)
-                        )
-                    except Exception as e:
-                        logger.error(f"Error detecting vehicles in frame {frame_idx}: {e}", exc_info=True)
-                        detections = []
-                else:
-                    # YOLO không khả dụng, skip detection
-                    detections = []
-                
-                # Track vehicles (chỉ nếu tracker đã được khởi tạo)
-                tracked_objects = []
-                if tracker is not None:
-                    try:
-                        tracked_objects = tracker.update(detections)
-                    except Exception as e:
-                        logger.error(f"Error tracking vehicles in frame {frame_idx}: {e}", exc_info=True)
-                        tracked_objects = []
-                
-                # Update centroids
-                current_centroids = {obj['track_id']: obj['centroid'] for obj in tracked_objects}
-                
-                # Count vehicles (chỉ nếu counter đã được khởi tạo)
-                if counter is not None:
-                    counting_result, counter = counter.count_vehicles(
-                        tracked_objects,
-                        previous_centroids
-                    )
-                    previous_centroids = current_centroids
-                else:
-                    # Fallback: không có counting
-                    counting_result = {
-                        'count_up': 0,
-                        'count_down': 0,
-                        'total': 0,
-                        'new_counts': []
-                    }
-                
-                # Save counting results (chỉ nếu có counter)
-                if counter is not None:
-                    save_counting_result(
-                        db_path,
-                        video_path=video_path,
-                        frame_path=frame_path,
-                        vehicle_count_up=counting_result['count_up'],
-                        vehicle_count_down=counting_result['count_down'],
-                        total_count=counting_result['total'],
-                        frame_number=frame_idx
-                    )
-                
                 # Save image hash (cho duplicate detection)
                 save_image_hash(frame_path, db_path)
         
-        # Export results (nếu có vehicle counting)
+        # Finalizing
         processing_status['progress'] = 90
         processing_status['current_step'] = 'Finalizing...'
-        
-        # Get summary (nếu có counting)
-        summary = {'count_up': 0, 'count_down': 0, 'total': 0}
-        if counter is not None:
-            summary = get_counting_summary(db_path, video_path)
-            timestamp = get_timestamp()
-            video_name = Path(video_path).stem
-            export_to_json(db_path, f"results/counting_results_{video_name}_{timestamp}.json", 'counting_results')
-            export_to_csv(db_path, f"results/counting_results_{video_name}_{timestamp}.csv", 'counting_results')
         
         processing_status['progress'] = 100
         processing_status['current_step'] = 'Completed'
         processed_count = len([f for f in os.listdir("data/processed_images") if f.endswith('.jpg')]) if os.path.exists("data/processed_images") else 0
         processing_status['message'] = f"Processing completed! Saved {processed_count} processed images to data/processed_images/"
-        if summary['total'] > 0:
-            processing_status['message'] += f" | Vehicles counted: {summary['total']}"
-        processing_status['summary'] = summary
         
     except Exception as e:
         logger.error(f"Error processing video: {e}", exc_info=True)
